@@ -1,0 +1,14 @@
+scipy
+numpy
+pandas
+matplotlib
+torch
+torchvision
+tqdm
+biopython
+pyBigWig
+scikit-learn
+scikit-image
+pytorch-lightning
+seaborn
+h5py

@@ -37,6 +37,8 @@ from sklearn.decomposition import TruncatedSVD, PCA
 torch.set_default_tensor_type(torch.DoubleTensor)
 # !pip install pyBigWig
 import pyBigWig
+import multiprocessing
+import cooler
 # !pip install hickle
 # import hickle as hkl
 
@@ -59,6 +61,15 @@ chrom_len_dict = dict(zip(chrom_list,length_list))
 #1. load epigenomic tracks for each chromosome
 #(extract data from bigWig files to numerical vector)
 
+def process_bwfile(args):
+    bwfile, bwfile_dir, chrom, distances = args
+    bw = pyBigWig.open(bwfile_dir + "/" + bwfile)
+    distance_gaps = list(range(0, bw.chroms()[chrom] - distances, distances))
+    value_list = [bw.stats(chrom, i, i + distances)[0] for i in distance_gaps]
+    value_list = [0.0 if v is None else v for v in value_list]
+    bw.close()
+    return value_list
+
 def data_load(chrom,
               bwfile_dir,
               distances=100,
@@ -75,14 +86,9 @@ def data_load(chrom,
     idx = [[i for i, s in enumerate(files) if chip in s][0] for chip in ['DNaseI','H3K27ac','H3K4me3','H3K27me3','CTCF']]
     files2 = [files[i] for i in idx]
     #b) extract data from these bigWig files
-    bw_list = []
-    for bwfile in files2:
-        bw = pyBigWig.open(bwfile_dir + "/" + bwfile) # open bigWig files
-        distance_gaps = list(range(0,bw.chroms()[chrom]-distances,distances)) # cut the chromosome into 100 bp bins
-        value_list = [bw.stats(chrom,i,i+distances)[0] for i in distance_gaps] # extract values
-        value_list = [0.0 if v is None else v for v in value_list] # replace NA with 0.0
-        bw_list.append(value_list)
-    del bw, value_list
+    args_list = [(bwfile, bwfile_dir, chrom, distances) for bwfile in files2]
+    with multiprocessing.Pool() as pool:
+        bw_list = pool.map(process_bwfile, args_list)
     return bw_list # this is a list of list: [[values for DNaseI], [values for H3K27ac], ...]
 
 def pred_chrom(chrom, net, 
@@ -103,24 +109,48 @@ def pred_chrom(chrom, net,
                 2Mb = seq_length * 100bp resolution for epigenomic tracks)
     resolution_hic: resolution of the Hi-C contact map (we choose 10kb as default)
     '''
+    # predlist = []
+    # n_chunk = round((len(chip_list[0])*100)/(resolution_hic*seq_length)) #how many submatrices in total to predict for each chromosome of selection
+    # torchtransform = transforms.Compose([transforms.ToTensor()])
+    # for k0 in range(n_chunk-2):
+    #     k = k0 * seq_length * 100
+    #     x0 = [i[k:k+seq_length*100+window_size] for i in chip_list] #find the correct input region to predict the submatrix
+    #     x = torchtransform(np.array(x0))[0]
+    #     net.eval()
+    #     pred0 = net(x)[0]
+    #     predlist.append(pred0[0].detach().numpy())
+    #     del x0, x, pred0
+    # pred_df = pd.DataFrame(np.vstack(predlist))
+    # pred_df.to_csv(pred_location,index=False,sep="\t",header=False)
+
+    # Add this before calling pred_chrom or in your main function
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    net = net.to(device)  # Move model to GPU
+
+    # Then in pred_chrom function:
     predlist = []
-    n_chunk = round((len(chip_list[0])*100)/(resolution_hic*seq_length)) #how many submatrices in total to predict for each chromosome of selection
-    torchtransform = transforms.Compose([transforms.ToTensor()])
-    for k0 in range(n_chunk-2):
-        k = k0 * seq_length * 100
-        x0 = [i[k:k+seq_length*100+window_size] for i in chip_list] #find the correct input region to predict the submatrix
-        x = torchtransform(np.array(x0))[0]
-        net.eval()
-        pred0 = net(x)[0]
-        predlist.append(pred0[0].detach().numpy())
-        del x0, x, pred0
-    pred_df = pd.DataFrame(np.vstack(predlist))
-    pred_df.to_csv(pred_location,index=False,sep="\t",header=False)
+    n_chunk = round((len(chip_list[0])*100)/(resolution_hic*seq_length))
+
+    net.eval()
+    with torch.no_grad():
+        for k0 in range(n_chunk-2):
+            k = k0 * seq_length * 100
+            x0 = [i[k:k+seq_length*100+window_size] for i in chip_list]
+            x = torch.tensor(np.array(x0), dtype=torch.float64).to(device)  # Note: float32, not float64
+            
+            pred0 = net(x)[0]
+            predlist.append(pred0[0].detach().cpu().numpy())
+            del x0, x, pred0
+
+        pred_df = pd.DataFrame(np.vstack(predlist))
+        pred_df.to_csv(pred_location, index=False, sep="\t", header=False)
 
 def pred_assemble(pred_location,
                   save_location,
                   window_size=14000,
-                  resolution_hic=10000):
+                  resolution_hic=10000,
+                  chrom="chr1", assembly='hg38'):
     '''
     This function is used to assemble all the predicted submatrices together 
     pred_location: the location and file name where the generated submatrices are saved at (the pred_location from pred_chrom function)
@@ -128,7 +158,7 @@ def pred_assemble(pred_location,
     window_size: the window size used in the model 
     resolution_hic: the resolution of Hi-C contact maps (default 10kb)
     '''
-    chr_pred = pd.read_csv(pred_location,"\t",header=None)
+    chr_pred = pd.read_csv(pred_location,sep="\t",header=None)
     col1_list,col2_list = [],[]
     for i in range(chr_pred.shape[0]): #generate correct coordinates for each generated submatrix
         first_position = int((window_size / 2) / 100)
@@ -146,6 +176,37 @@ def pred_assemble(pred_location,
     chr_coord.iloc[:,0] = [int(j) for j in chr_coord.iloc[:,0].to_list()]
     chr_coord.iloc[:,1] = [int(j) for j in chr_coord.iloc[:,1].to_list()]
     chr_coord.to_csv(str.replace(save_location,".txt","_for_HiC.tsv.gz"),index=False,sep="\t",header=False) #prepare format to save into .hic format
+
+    # Generate a "cool" file from chr_coord DataFrame
+
+    # Prepare bins and pixels DataFrames
+    # Bins: unique genomic positions
+    bins = pd.DataFrame({
+        'chrom': chrom,
+        'start': sorted(set([int(x) for x in chr_coord.iloc[:, 0].tolist() + chr_coord.iloc[:, 1].tolist()]))
+    })
+    bins['end'] = bins['start'] + int(resolution_hic)
+    bins = bins.drop_duplicates(subset=['start']).reset_index(drop=True)
+    bins['chrom'] = bins['chrom'].astype(str)
+
+    print(bins.head())
+    # Map positions to bin IDs
+    bin_id_map = {pos: idx for idx, pos in enumerate(bins['start'])}
+    pixels = pd.DataFrame({
+        'bin1_id': chr_coord.iloc[:, 0].map(bin_id_map),
+        'bin2_id': chr_coord.iloc[:, 1].map(bin_id_map),
+        'count': chr_coord.iloc[:, 2]
+    })
+    print(pixels.head())
+    # Create the .cool file
+    cool_save_location = str.replace(save_location, ".txt", ".cool")
+    cooler.create_cooler(
+        cool_uri=cool_save_location,
+        bins=bins,
+        pixels=pixels,
+        dtypes={'count': np.float64},  # or whatever dtype you need
+        # metadata=metadata_dict if you have one else {}
+    )
 
 def results_generation(chrom,
                        net, 
@@ -172,42 +233,48 @@ def results_generation(chrom,
     resolution_hic: resolution of the Hi-C contact maps (default is 10kb)
     '''
     # 1. prepare chipseq data
+    print("Starting data_load for chromosome:", chrom, "and cell type:", cell_type)
     chip_list = data_load(chrom=chrom,bwfile_dir=bwfile_dir,cell_type=cell_type)
 
     # 2. generate predictions
     # a) generate submatrices (saved into stacked DataFrames)
+    print("Starting pred_chrom for chromosome:", chrom)
     pred_chrom(chrom=chrom,net=net,chip_list=chip_list,pred_location = submatrix_location,
                window_size = window_size, seq_length = seq_length, resolution_hic = resolution_hic)
+    # print
     # b) assemble generated submatrices into the an entire map for a chromosome
+    print("Starting pred_assemble for chromosome:", chrom)
     pred_assemble(pred_location = submatrix_location, save_location = assemble_matrix_location, 
-                  window_size = window_size, resolution_hic = resolution_hic)
+                  window_size = window_size, resolution_hic = resolution_hic, chrom=chrom)
     
+    if ground_truth_file:
     # 3. generate ground truth (subset ground truth matrix using the coordinates that we generated)
     # a) obtain coodinates for the ground truth maps
-    with open(ground_truth_file, 'rb') as fp:
-        diag_list = pickle.load(fp)
-    diag_sublist = diag_list[:100] #subset 1Mb distance from the diagonal
-    col1_list, col2_list = [], []
-    for i in range(len(diag_sublist)):
-        diag_vec = diag_sublist[i]
-        col1 = [k*resolution_hic for k in range(len(diag_vec))]
-        col2 = [(k+i)*resolution_hic for k in range(len(diag_vec))]
-        col1_list.append(col1)
-        col2_list.append(col2)
-    diag_vec = [j for i in diag_sublist for j in i]
-    col1_list = [j for i in col1_list for j in i]
-    col2_list = [j for i in col2_list for j in i]
-    diag_long = pd.DataFrame(np.array((col1_list,col2_list,diag_vec)).T)
-    diag_long.columns = ["location1","location2","true_counts"]
-    # b) load prediction matrix to get consistent coordinates 
-    chr_coord = pd.read_csv(assemble_matrix_location,"\t",header=None)
-    chr_coord.columns = ["location1","location2","prediction"]
-    # c) subset data 
-    diag_sub = pd.merge(chr_coord,diag_long,how="left",left_on=["location1","location2"],right_on=["location1","location2"])
-    diag_sub = diag_sub[["location1","location2","true_counts"]]
-    diag_sub.to_csv(ground_truth_location,index=False,sep="\t",header=False)
-    diag_sub.iloc[:,0] = [int(i) for i in diag_sub.iloc[:,0].to_list()]
-    diag_sub.iloc[:,1] = [int(i) for i in diag_sub.iloc[:,1].to_list()]
-    diag_sub.to_csv(str.replace(ground_truth_location,".txt","_for_HiC.tsv.gz"),index=False,sep="\t",header=False)
+        print("Starting ground truth generation for chromosome:", chrom)
+        with open(ground_truth_file, 'rb') as fp:
+            diag_list = pickle.load(fp)
+        diag_sublist = diag_list[:100] #subset 1Mb distance from the diagonal
+        col1_list, col2_list = [], []
+        for i in range(len(diag_sublist)):
+            diag_vec = diag_sublist[i]
+            col1 = [k*resolution_hic for k in range(len(diag_vec))]
+            col2 = [(k+i)*resolution_hic for k in range(len(diag_vec))]
+            col1_list.append(col1)
+            col2_list.append(col2)
+        diag_vec = [j for i in diag_sublist for j in i]
+        col1_list = [j for i in col1_list for j in i]
+        col2_list = [j for i in col2_list for j in i]
+        diag_long = pd.DataFrame(np.array((col1_list,col2_list,diag_vec)).T)
+        diag_long.columns = ["location1","location2","true_counts"]
+        # b) load prediction matrix to get consistent coordinates 
+        chr_coord = pd.read_csv(assemble_matrix_location,sep="\t",header=None)
+        chr_coord.columns = ["location1","location2","prediction"]
+        # c) subset data 
+        diag_sub = pd.merge(chr_coord,diag_long,how="left",left_on=["location1","location2"],right_on=["location1","location2"])
+        diag_sub = diag_sub[["location1","location2","true_counts"]]
+        diag_sub.to_csv(ground_truth_location,index=False,sep="\t",header=False)
+        diag_sub.iloc[:,0] = [int(i) for i in diag_sub.iloc[:,0].to_list()]
+        diag_sub.iloc[:,1] = [int(i) for i in diag_sub.iloc[:,1].to_list()]
+        diag_sub.to_csv(str.replace(ground_truth_location,".txt","_for_HiC.tsv.gz"),index=False,sep="\t",header=False)
     print("Complete", datetime.now())
     

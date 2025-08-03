@@ -29,6 +29,14 @@ class Chip2HiCDataset(torch.utils.data.Dataset):
         self.zero_pad = zero_pad
 
         print("Loading input:")
+        if not os.path.exists(save_path_X):
+            raise FileNotFoundError(f"Input file not found: {save_path_X}")
+        else:
+            print(f"Input file found: {save_path_X}")
+        if not os.path.exists(save_path_y):
+            raise FileNotFoundError(f"Label file not found: {save_path_y}")
+        else:
+            print(f"Label file found: {save_path_y}")
         self.inputs = h5.File(save_path_X, 'r')
         print("Loading labels:")
         with open(save_path_y, 'rb') as handle:

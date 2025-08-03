@@ -1,18 +1,65 @@
-#!/x0/arnavmd/python3/bin/python3
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+print("Starting adversarial.py")
+import os
+
+# Force CPU-only mode to test
+# os.environ['CUDA_VISIBLE_DEVICES'] = ''
+
 import torch
+print(f"PyTorch version: {torch.__version__}")
+print(f"CUDA available: {torch.cuda.is_available()}")
+import torch
+# print("Torch version: ", torch.__version__)
 import torch.nn as nn
+# print("Torch version: ", torch.__version__)
 from torchvision import datasets
+# print("Torchvision version: ", datasets.__version__)
 from torchvision import transforms
+# print("Torchvision version: ", transforms.__version__)
 import numpy as np
+# print("Numpy version: ", np.__version__)
 import torch.nn.functional as F
+# print
 import torch.optim as optim
+# print("Torch version: ", optim.__version__)
 import argparse
-from utils import *
+# print("Argparse version: ", argparse.__version__)
+import utils
+# print("Utils version: ", utils.__version__)
 import time
+# print("Time module imported")
 
 print(torch.__version__)
 
+def safe_mean(data):
+    """Safely compute mean of tensor or array"""
+    if isinstance(data, torch.Tensor):
+        return torch.mean(data).detach().cpu().item()
+    elif isinstance(data, (list, tuple)) and len(data) > 0:
+        if isinstance(data[0], torch.Tensor):
+            # List of tensors
+            stacked = torch.stack(data)
+            return torch.mean(stacked).detach().cpu().item()
+        else:
+            # List of numbers
+            return np.mean(data)
+    else:
+        return float(np.mean(data)) if hasattr(data, '__len__') else float(data)
 
+def safe_min(data):
+    """Safely compute min of tensor or array"""
+    if isinstance(data, torch.Tensor):
+        return torch.min(data).detach().cpu().item()
+    elif isinstance(data, (list, tuple)) and len(data) > 0:
+        if isinstance(data[0], torch.Tensor):
+            stacked = torch.stack(data)
+            return torch.min(stacked).detach().cpu().item()
+        else:
+            return min(data)
+    else:
+        return float(min(data)) if hasattr(data, '__len__') else float(data)
+    
 def main():
 
     parser = argparse.ArgumentParser()
@@ -30,15 +77,32 @@ def main():
 
     args = parser.parse_args()
 
-    
+    print("Arguments loaded")
+    # Import based on resolution choice
     if args.high_res:
-        from data_loader_5kb import *
-        from model_5kb import *
+        print("Using 5kb resolution Hi-C")
+        try:
+            import data_loader_5kb as data_loader
+            import model_5kb as model_module
+            from model_5kb import Net, Disc  # Import specific classes
+            from data_loader_5kb import Chip2HiCDataset
+        except ImportError as e:
+            print(f"Error importing 5kb modules: {e}")
+            return
     else:
-        from data_loader_10kb import *
-        from model_10kb import *
+        print("Using 10kb resolution Hi-C")
+        try:
+            import data_loader_10kb as data_loader
+            import model_10kb as model_module
+            from model_10kb import Net, Disc
+            from data_loader_10kb import Chip2HiCDataset
+        except ImportError as e:
+            print(f"Error importing 10kb modules: {e}")
+            return
+    print("Modules imported")
     
     if args.wandb:
+        print("Using Weights and Biases for logging")
         import wandb
         wandb.init()
 
@@ -63,7 +127,7 @@ def main():
 
 
     if os.path.exists(LOG_PATH):
-        restore_latest(model, LOG_PATH, ext='.pt_model')
+        utils.restore_latest(model, LOG_PATH, ext='.pt_model')
     else:
         os.makedirs(LOG_PATH)
 
@@ -128,23 +192,24 @@ def main():
                 
                 # Plot 5 images on wandb
                 if test_i < 5:
-                    im.append(wandb.Image(generate_image(test_label.cpu(), pred.detach().cpu(), LOG_PATH, TEST_SEQ_LENGTH, bands=100)))
+                    im.append(wandb.Image(utils.generate_image(test_label.cpu(), pred.detach().cpu(), LOG_PATH, TEST_SEQ_LENGTH, bands=100)))
                 else:
                     break
 
-
         if args.wandb:
             wandb.log({"Validation Examples": im})
-            wandb.log({'val_correlation': np.mean(test_loss)})
+            wandb.log({'val_correlation': safe_mean(test_loss)})
+            
+            # wandb.log({"Validation Examples": im.cpu()})
         
-        print('Test Loss: ', np.mean(test_loss), ' Best: ', str(min_loss))
+        print('Test Loss: ', safe_mean(test_loss), ' Best: ', str(min_loss))
 
-        if np.mean(test_loss) > min_loss:
-            min_loss = np.mean(test_loss)
+        if safe_mean(test_loss) > min_loss:
+            min_loss = safe_mean(test_loss)
 
-        save(model, os.path.join(LOG_PATH, '%03d.pt_model' % epoch), num_to_keep=1)
+        utils.save(model, os.path.join(LOG_PATH, '%03d.pt_model' % epoch), num_to_keep=1)
         with open(test_log, 'a+') as f:
-            f.write(str(np.mean(test_loss)) + "\n")
+            f.write(str(safe_mean(test_loss)) + "\n")
        
         losses = []
         model.train()
@@ -203,4 +268,5 @@ def main():
     print(t1 - t0)       
  
 if __name__ == '__main__':
+    print("Starting adversarial training")
     main()
