@@ -33,6 +33,9 @@ def parse_arguments():
     parser.add_argument('--prediction_chromosomes', type=str, required=True, help='Comma-separated list of test chromosomes')
     parser.add_argument('--output', type=str, required=True, help='Output folder for results')
     parser.add_argument('--epochs', type=int, default=55, help='Number of training epochs')
+    parser.add_argument('--comparisonMatrix', type=str, required=False, help='Path to comparison matrix cooler file')
+    parser.add_argument('--chromosomeSizeFile', type=str, required=False, help='Path to chromosome size file')
+    parser.add_argument('--resolution', type=int, default=10000, help='Resolution for Hi-C matrices')
     return parser.parse_args()
 
 
@@ -52,7 +55,7 @@ def objective(config, pArgs):
         "--window_size", str(config.get("window_size", "14000")),
         "--dataX", pArgs.dataX,
         "--dataY", pArgs.dataY,
-        "--outputFolder", pArgs.outputFolder,
+        "--outputFolder", os.path.join(pArgs.outputFolder, trial_id),
         "--train_chromosomes", pArgs.train_chromosomes,
         "--test_chromosomes", pArgs.validation_chromosomes,
         "--plot_region", pArgs.plot_region
@@ -66,17 +69,21 @@ def objective(config, pArgs):
     # Call the training/prediction function
     result = train_adversarial_main(args_list)
 
-    predict_on_chromosome(model=os.path.join(pArgs.outputFolder, f"model_{trial_id}.pt"),
-                            chrom=pArgs.prediction_chromosomes.split(',')[0],
-                            # size,
-                            window_size=int(config.get("window_size", "14000")),
-                            bigwig_folder=pArgs.bigwig_folder,
-                            # output_folder,
-                            submatrix_location=os.path.join(pArgs.outputFolder, "submatrix.txt"),
-                            assemble_matrix_location=os.path.join(pArgs.outputFolder, "assemble_matrix.txt"),
-                            ground_truth_file=None,
-                            ground_truth_output=None,
-                            cell_type="GM12878")
+    predict_on_chromosome(
+        model=os.path.join(pArgs.outputFolder, f"model_{trial_id}.pt"),
+        windowSize=int(config.get("window_size", 14000)),
+        chromosomes=pArgs.prediction_chromosomes.split(','),
+        chromosomeSizes=pArgs.chromosomeSizeFile,
+        bigwigFolder=pArgs.bigwig_folder,
+        outputFolder=os.path.join(pArgs.outputFolder, trial_id),
+        submatrixName=os.path.join(pArgs.outputFolder, trial_id, "submatrix_location.txt"),
+        assembleMatrixLocation=os.path.join(pArgs.outputFolder, trial_id, "assemble_matrix_location.txt"),
+        groundTruthFile=None,
+        groundTruthOutput=None,
+        chromosomeSizesFile=pArgs.chromosomeSizeFile,
+        resolution=pArgs.resolution  # Default resolution if not provided
+        # Add resolution or other arguments here if needed
+    )
 
 
     def compute_distance_correlation_auc(cooler_file1, cooler_file2):
@@ -112,7 +119,7 @@ def objective(config, pArgs):
         return auc_value
 
     # Example usage:
-    auc_score = compute_distance_correlation_auc("file1.cool", "file2.cool")
+    auc_score = compute_distance_correlation_auc(pArgs.comparisonMatrix, os.path.join(pArgs.outputFolder, trial_id, "assemble_matrix.cool"))
     # print("AUC of distance-dependent Pearson correlation:", auc_score)
     if pArgs.genomicRegion:
         log.debug("Plot tracks")
