@@ -101,9 +101,9 @@ def save(net, file_name, num_to_keep=1):
     extension = os.path.splitext(file_name)[1]
     checkpoints = sorted(glob.glob(folder + '/*' + extension), key=os.path.getmtime)
     print('Saved %s\n' % file_name)
-    if num_to_keep > 0:
-        for ff in checkpoints[:-num_to_keep]:
-            os.remove(ff)
+    # if num_to_keep > 0:
+    #     for ff in checkpoints[:-num_to_keep]:
+    #         os.remove(ff)
 
 
 def restore(net, save_file):

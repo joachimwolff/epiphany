@@ -150,7 +150,7 @@ def pred_assemble(pred_location,
                   save_location,
                   window_size=14000,
                   resolution_hic=10000,
-                  chrom="chr1", assembly='hg38'):
+                  chrom="chr1", assembly='hg38', chromosome_sizes=None):
     '''
     This function is used to assemble all the predicted submatrices together 
     pred_location: the location and file name where the generated submatrices are saved at (the pred_location from pred_chrom function)
@@ -181,13 +181,35 @@ def pred_assemble(pred_location,
 
     # Prepare bins and pixels DataFrames
     # Bins: unique genomic positions
-    bins = pd.DataFrame({
-        'chrom': chrom,
-        'start': sorted(set([int(x) for x in chr_coord.iloc[:, 0].tolist() + chr_coord.iloc[:, 1].tolist()]))
-    })
-    bins['end'] = bins['start'] + int(resolution_hic)
-    bins = bins.drop_duplicates(subset=['start']).reset_index(drop=True)
-    bins['chrom'] = bins['chrom'].astype(str)
+    # Use chromosome_sizes and resolution_hic to calculate bins
+    if chromosome_sizes is not None:
+        chrom_size = chromosome_sizes[chrom]
+        bin_starts = list(range(0, chrom_size, resolution_hic))
+        bins = pd.DataFrame({
+            'chrom': chrom,
+            'start': bin_starts
+        })
+        bins['end'] = bins['start'] + int(resolution_hic)
+        bins.loc[bins['end'] > chrom_size, 'end'] = chrom_size
+        bins = bins.reset_index(drop=True)
+        bins['chrom'] = bins['chrom'].astype(str)
+    else:
+        # fallback to previous method if chromosome_sizes is not provided
+        bins = pd.DataFrame({
+            'chrom': chrom,
+            'start': sorted(set([int(x) for x in chr_coord.iloc[:, 0].tolist() + chr_coord.iloc[:, 1].tolist()]))
+        })
+        bins['end'] = bins['start'] + int(resolution_hic)
+        bins = bins.drop_duplicates(subset=['start']).reset_index(drop=True)
+        bins['chrom'] = bins['chrom'].astype(str)
+
+    # bins = pd.DataFrame({
+    #     'chrom': chrom,
+    #     'start': sorted(set([int(x) for x in chr_coord.iloc[:, 0].tolist() + chr_coord.iloc[:, 1].tolist()]))
+    # })
+    # bins['end'] = bins['start'] + int(resolution_hic)
+    # bins = bins.drop_duplicates(subset=['start']).reset_index(drop=True)
+    # bins['chrom'] = bins['chrom'].astype(str)
 
     print(bins.head())
     # Map positions to bin IDs
@@ -208,6 +230,10 @@ def pred_assemble(pred_location,
         # metadata=metadata_dict if you have one else {}
     )
 
+
+
+
+
 def results_generation(chrom,
                        net, 
 					   cell_type,
@@ -218,7 +244,8 @@ def results_generation(chrom,
                        ground_truth_location,
                        window_size=14000,
                        seq_length = 200,
-                       resolution_hic = 10000):
+                       resolution_hic = 10000,
+                       chromosomeSizesFile=None):
     '''
     The overall function to generate predicted contact maps (1Mb distance band for the entire chromosome)
     chrom: which chromosome to generate
@@ -232,6 +259,20 @@ def results_generation(chrom,
     seq_length: length of the submatrix along the diagonal
     resolution_hic: resolution of the Hi-C contact maps (default is 10kb)
     '''
+
+    # Read chromosomeSizesFile and make a dict if provided
+    chromosome_sizes = None
+    if chromosomeSizesFile is not None:
+        chromosome_sizes = {}
+        print("Reading chromosome sizes from:", chromosomeSizesFile)
+        with open(chromosomeSizesFile, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    chrom_name, size = parts[0], int(parts[1])
+                    chromosome_sizes[chrom_name] = size
+    else:
+        chromosome_sizes = None
     # 1. prepare chipseq data
     print("Starting data_load for chromosome:", chrom, "and cell type:", cell_type)
     chip_list = data_load(chrom=chrom,bwfile_dir=bwfile_dir,cell_type=cell_type)
@@ -245,7 +286,7 @@ def results_generation(chrom,
     # b) assemble generated submatrices into the an entire map for a chromosome
     print("Starting pred_assemble for chromosome:", chrom)
     pred_assemble(pred_location = submatrix_location, save_location = assemble_matrix_location, 
-                  window_size = window_size, resolution_hic = resolution_hic, chrom=chrom)
+                  window_size = window_size, resolution_hic = resolution_hic, chrom=chrom, chromosome_sizes=chromosome_sizes)
     
     if ground_truth_file:
     # 3. generate ground truth (subset ground truth matrix using the coordinates that we generated)

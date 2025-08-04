@@ -59,31 +59,32 @@ def safe_min(data):
             return min(data)
     else:
         return float(min(data)) if hasattr(data, '__len__') else float(data)
-    
+    # ... (rest of your code unchanged)
+
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gpu", help="CUDA ID", default="0")
-    parser.add_argument("--b", help="batch size", default="1")
-    parser.add_argument("--e", help="number of epochs", default="55")
-    parser.add_argument("--lr", help="initial learning rate", default="1e-4")
-    parser.add_argument("--v", help="experiment version", default="0.1")
-    parser.add_argument("--lam", help="tradeoff between l2 and adversarial loss", default="0.95")
-    parser.add_argument("--window_size", help="Context (in terms of 100kb) for each orthogonal vector", default="14000")
-    parser.add_argument("--m", help="additional comments", default="")
-    parser.add_argument("--high_res", action='store_true', help="Use if predicting 5kb resolution Hi-C (10kb is used by default)")
-    parser.add_argument('--wandb', action='store_true', help='Toggle wandb')
-    parser.add_argument("--x_file", help="X input file name", default="GM12878_X.h5")
-    parser.add_argument("--y_file", help="y input file name", default="GM12878_y.pickle")
-    parser.add_argument("--pretrained_model", help="Path to pretrained model (e.g., 1_5kb_Akita_ICE_microC_mean.pt)", default=None)
-    parser.add_argument("--output_folder", help="Output folder for logs and models", default="./logs")
-    parser.add_argument("--train_chroms", nargs='+', default=['chr1', 'chr2', 'chr4', 'chr5', 'chr6', 'chr7', 'chr8', 'chr9', 'chr10', 'chr12', 'chr13', 'chr14', 'chr15', 'chr16', 'chr18', 'chr19', 'chr20', 'chr21', 'chr22'], help="List of chromosomes for training")
-    parser.add_argument("--test_chroms", nargs='+', default=['chr3', 'chr11', 'chr17'], help="List of chromosomes for testing")
+    parser.add_argument("-g", "--gpu", help="CUDA ID", default="0")
+    parser.add_argument("-b", "--batchSize", help="Batch size", default="1")
+    parser.add_argument("-e", "--epochs", help="Number of epochs", default="55")
+    parser.add_argument("-l", "--lr", help="Initial learning rate", default="1e-4")
+    parser.add_argument("-v", "--version", help="Experiment version", default="0.1")
+    parser.add_argument("--lam", help="Tradeoff between l2 and adversarial loss", default="0.95")
+    parser.add_argument("-w", "--windowSize", help="Context (in terms of 100kb) for each orthogonal vector", default="14000")
+    parser.add_argument("-m", "--message", help="Additional comments", default="")
+    parser.add_argument("--highRes", action='store_true', help="Use if predicting 5kb resolution Hi-C (10kb is used by default)")
+    parser.add_argument("--wandb", action='store_true', help="Toggle wandb")
+    parser.add_argument("-x", "--xFile", help="X input file name", default="GM12878_X.h5")
+    parser.add_argument("-y", "--yFile", help="y input file name", default="GM12878_y.pickle")
+    parser.add_argument("-p", "--pretrainedModel", help="Path to pretrained model (e.g., 1_5kb_Akita_ICE_microC_mean.pt)", default=None)
+    parser.add_argument("-o", "--outputFolder", help="Output folder for logs and models", default="./logs")
+    parser.add_argument("-tr", "--trainingChromosomes", nargs='+', default=['chr1', 'chr2', 'chr4', 'chr5', 'chr6', 'chr7', 'chr8', 'chr9', 'chr10', 'chr12', 'chr13', 'chr14', 'chr15', 'chr16', 'chr18', 'chr19', 'chr20', 'chr21', 'chr22'], help="List of chromosomes for training")
+    parser.add_argument("-te", "--validationChromosomes", nargs='+', default=['chr3', 'chr11', 'chr17'], help="List of chromosomes for testing")
     args = parser.parse_args()
 
     print("Arguments loaded")
     # Import based on resolution choice
-    if args.high_res:
+    if args.highRes:
         print("Using 5kb resolution Hi-C")
         try:
             import data_loader_5kb as data_loader
@@ -110,12 +111,11 @@ def main():
         import wandb
         wandb.init()
 
-
-    print("Run: " + args.m)
+    print("Run: " + args.message)
 
     LEARNING_RATE = float(args.lr)
-    EXPERIMENT_VERSION = args.v
-    LOG_PATH = os.path.join(args.output_folder, EXPERIMENT_VERSION)
+    EXPERIMENT_VERSION = args.version
+    LOG_PATH = os.path.join(args.outputFolder, EXPERIMENT_VERSION)
     if not os.path.exists(LOG_PATH):
         os.makedirs(LOG_PATH)
     LAMBDA = float(args.lam)
@@ -124,32 +124,27 @@ def main():
 
     torch.cuda.set_device(int(args.gpu))
 
-
     torch.manual_seed(0)    
-    model = Net(1, 5, int(args.window_size)).cuda()
+    model = Net(1, 5, int(args.windowSize)).cuda()
     disc = Disc().cuda()
     if args.wandb:
         wandb.watch(model, log='all')
 
-
     if os.path.exists(LOG_PATH):
         eutils.restore_latest(model, LOG_PATH, ext='.pt_model')
 
-
     with open(os.path.join(LOG_PATH, 'setup.txt'), 'a+') as f:
-        f.write("\nVersion: " + args.v)
-        f.write("\nBatch Size: " + args.b)
+        f.write("\nVersion: " + args.version)
+        f.write("\nBatch Size: " + args.batchSize)
         f.write("\nInitial Learning Rate: " + args.lr)
-        f.write("\nComments: " + args.m)
-
+        f.write("\nComments: " + args.message)
 
     # GM12878 Standard
-    test_chroms = args.test_chroms
-    train_chroms = args.train_chroms
+    test_chroms = args.validationChromosomes
+    train_chroms = args.trainingChromosomes
 
-
-    train_set = Chip2HiCDataset(seq_length=TRAIN_SEQ_LENGTH, window_size=int(args.window_size), X_data=args.x_file, y_data=args.y_file, chroms=train_chroms, mode='train') 
-    test_set = Chip2HiCDataset(seq_length=TEST_SEQ_LENGTH, window_size=int(args.window_size), X_data=args.x_file, y_data=args.y_file, chroms=test_chroms, mode='test') 
+    train_set = Chip2HiCDataset(seq_length=TRAIN_SEQ_LENGTH, window_size=int(args.windowSize), X_data=args.xFile, y_data=args.yFile, chroms=train_chroms, mode='train') 
+    test_set = Chip2HiCDataset(seq_length=TEST_SEQ_LENGTH, window_size=int(args.windowSize), X_data=args.xFile, y_data=args.yFile, chroms=test_chroms, mode='test') 
 
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=1, shuffle=True, num_workers=4)
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=False, num_workers=4)
@@ -166,8 +161,7 @@ def main():
 
     t0 = time.time()
     #scaler = torch.cuda.amp.GradScaler()
-    for epoch in range(int(args.e)):
-
+    for epoch in range(int(args.epochs)):
 
         disc_preds_train = []
 
@@ -196,16 +190,15 @@ def main():
                 test_loss.append(loss)        
                 
                 # Plot 5 images on wandb
-                if test_i < 5:
-                    im.append(wandb.Image(eutils.generate_image(test_label.cpu(), pred.detach().cpu(), LOG_PATH, TEST_SEQ_LENGTH, bands=100)))
-                else:
-                    break
+                if args.wandb:
+                    if test_i < 5:
+                        im.append(wandb.Image(eutils.generate_image(test_label.cpu(), pred.detach().cpu(), LOG_PATH, TEST_SEQ_LENGTH, bands=100)))
+                    else:
+                        break
 
         if args.wandb:
             wandb.log({"Validation Examples": im})
             wandb.log({'val_correlation': safe_mean(test_loss)})
-            
-            # wandb.log({"Validation Examples": im.cpu()})
         
         print('Test Loss: ', safe_mean(test_loss), ' Best: ', str(min_loss))
 
@@ -242,7 +235,6 @@ def main():
             loss.backward()
             optimizer.step()
 
-
             # Train discriminator
             disc_optimizer.zero_grad()
 
@@ -255,7 +247,6 @@ def main():
             disc_preds_train.append(torch.sigmoid(true_pred).item())
             disc_preds_train.append(torch.sigmoid(fake_pred).item())
             disc_optimizer.step()
-
 
             if args.wandb:
                 wandb.log({'mse_loss': mse_loss.item()}) 
