@@ -1,5 +1,4 @@
-from utils import *
-
+import epiphany_utils as eutils
 import pandas as pd
 import numpy as np
 import torch.utils.data 
@@ -14,10 +13,11 @@ import time
 #wandb.init()
 
 class Chip2HiCDataset(torch.utils.data.Dataset):
-    def __init__(self, chipseq_path=None, diag_list_dir=None, seq_length=200, window_size=14000, chroms=['chr22'], mode='train', save_dir='./Datasets', subtract_mean=False, obs_exp=False):
-                
-        save_path_X = os.path.join(save_dir, 'H1_X.h5')
-        save_path_y = os.path.join(save_dir, 'H1_y_5kb_Akita_ICED_microC.pickle')
+    def __init__(self, chipseq_path=None, diag_list_dir=None, seq_length=200, window_size=14000, chroms=['chr22'], mode='train', X_data='GM12878_X.h5', obs_exp_or_mean_data='H1_5kb_Akita_ICE_microC_mean.pt', y_data='GM12878_y.pickle', subtract_mean=False, obs_exp=False):
+    # def __init__(self, seq_length=200, window_size=14000, chroms=['chr22'], mode='train', X_data='GM12878_X.h5', y_data='GM12878_y.pickle', zero_pad=True):
+        
+        save_path_X = X_data
+        save_path_y = y_data
 
         self.seq_length = seq_length
         self.chroms = chroms
@@ -44,7 +44,7 @@ class Chip2HiCDataset(torch.utils.data.Dataset):
         print(self.sizes)
 
         if self.subtract_mean or self.obs_exp:
-            self.mean = torch.load(os.path.join(save_dir, 'H1_5kb_Akita_ICE_microC_mean.pt')).numpy()
+            self.mean = torch.load(obs_exp_or_mean_data).numpy()
 
         return
 
@@ -64,7 +64,7 @@ class Chip2HiCDataset(torch.utils.data.Dataset):
         end = np.minimum(idx*self.seq_length + self.seq_length + self.buf, len(self.labels[chr][0]) - self.buf)
         contact_data = []
         for t in range(idx*self.seq_length + self.buf, np.minimum(idx*self.seq_length + self.seq_length + self.buf, len(self.labels[chr][0]) - self.buf),1):
-            contact_vec  = data_preparation(t,self.labels[chr],self.inputs[chr])
+            contact_vec  = eutils.data_preparation(t,self.labels[chr],self.inputs[chr])
             contact_data.append(contact_vec)
 
         y_chr = np.array(contact_data)            

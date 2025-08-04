@@ -25,7 +25,7 @@ import torch.optim as optim
 # print("Torch version: ", optim.__version__)
 import argparse
 # print("Argparse version: ", argparse.__version__)
-import utils
+import epiphany_utils as eutils
 # print("Utils version: ", utils.__version__)
 import time
 # print("Time module imported")
@@ -73,8 +73,12 @@ def main():
     parser.add_argument("--m", help="additional comments", default="")
     parser.add_argument("--high_res", action='store_true', help="Use if predicting 5kb resolution Hi-C (10kb is used by default)")
     parser.add_argument('--wandb', action='store_true', help='Toggle wandb')
- 
-
+    parser.add_argument("--x_file", help="X input file name", default="GM12878_X.h5")
+    parser.add_argument("--y_file", help="y input file name", default="GM12878_y.pickle")
+    parser.add_argument("--pretrained_model", help="Path to pretrained model (e.g., 1_5kb_Akita_ICE_microC_mean.pt)", default=None)
+    parser.add_argument("--output_folder", help="Output folder for logs and models", default="./logs")
+    parser.add_argument("--train_chroms", nargs='+', default=['chr1', 'chr2', 'chr4', 'chr5', 'chr6', 'chr7', 'chr8', 'chr9', 'chr10', 'chr12', 'chr13', 'chr14', 'chr15', 'chr16', 'chr18', 'chr19', 'chr20', 'chr21', 'chr22'], help="List of chromosomes for training")
+    parser.add_argument("--test_chroms", nargs='+', default=['chr3', 'chr11', 'chr17'], help="List of chromosomes for testing")
     args = parser.parse_args()
 
     print("Arguments loaded")
@@ -111,7 +115,9 @@ def main():
 
     LEARNING_RATE = float(args.lr)
     EXPERIMENT_VERSION = args.v
-    LOG_PATH = './logs/' + EXPERIMENT_VERSION + '/'
+    LOG_PATH = os.path.join(args.output_folder, EXPERIMENT_VERSION)
+    if not os.path.exists(LOG_PATH):
+        os.makedirs(LOG_PATH)
     LAMBDA = float(args.lam)
     TRAIN_SEQ_LENGTH = 200 
     TEST_SEQ_LENGTH = 200 
@@ -127,9 +133,8 @@ def main():
 
 
     if os.path.exists(LOG_PATH):
-        utils.restore_latest(model, LOG_PATH, ext='.pt_model')
-    else:
-        os.makedirs(LOG_PATH)
+        eutils.restore_latest(model, LOG_PATH, ext='.pt_model')
+
 
     with open(os.path.join(LOG_PATH, 'setup.txt'), 'a+') as f:
         f.write("\nVersion: " + args.v)
@@ -139,12 +144,12 @@ def main():
 
 
     # GM12878 Standard
-    test_chroms = ['chr3', 'chr11', 'chr17']
-    train_chroms = ['chr1', 'chr2', 'chr4', 'chr5', 'chr6', 'chr7', 'chr8', 'chr9', 'chr10', 'chr12', 'chr13', 'chr14', 'chr15', 'chr16', 'chr18', 'chr19', 'chr20', 'chr21', 'chr22']
+    test_chroms = args.test_chroms
+    train_chroms = args.train_chroms
 
 
-    train_set = Chip2HiCDataset(seq_length=TRAIN_SEQ_LENGTH, window_size=int(args.window_size), chroms=train_chroms, mode='train') 
-    test_set = Chip2HiCDataset(seq_length=TEST_SEQ_LENGTH, window_size=int(args.window_size), chroms=test_chroms, mode='test') 
+    train_set = Chip2HiCDataset(seq_length=TRAIN_SEQ_LENGTH, window_size=int(args.window_size), X_data=args.x_file, y_data=args.y_file, chroms=train_chroms, mode='train') 
+    test_set = Chip2HiCDataset(seq_length=TEST_SEQ_LENGTH, window_size=int(args.window_size), X_data=args.x_file, y_data=args.y_file, chroms=test_chroms, mode='test') 
 
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=1, shuffle=True, num_workers=4)
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=1, shuffle=False, num_workers=4)
@@ -192,7 +197,7 @@ def main():
                 
                 # Plot 5 images on wandb
                 if test_i < 5:
-                    im.append(wandb.Image(utils.generate_image(test_label.cpu(), pred.detach().cpu(), LOG_PATH, TEST_SEQ_LENGTH, bands=100)))
+                    im.append(wandb.Image(eutils.generate_image(test_label.cpu(), pred.detach().cpu(), LOG_PATH, TEST_SEQ_LENGTH, bands=100)))
                 else:
                     break
 
@@ -207,7 +212,7 @@ def main():
         if safe_mean(test_loss) > min_loss:
             min_loss = safe_mean(test_loss)
 
-        utils.save(model, os.path.join(LOG_PATH, '%03d.pt_model' % epoch), num_to_keep=1)
+        eutils.save(model, os.path.join(LOG_PATH, '%03d.pt_model' % epoch), num_to_keep=1)
         with open(test_log, 'a+') as f:
             f.write(str(safe_mean(test_loss)) + "\n")
        

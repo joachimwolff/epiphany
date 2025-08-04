@@ -1,4 +1,4 @@
-from utils import *
+import epiphany_utils as eutils
 
 import pandas as pd
 import numpy as np
@@ -13,10 +13,7 @@ import time
 #wandb.init()
 
 class Chip2HiCDataset(torch.utils.data.Dataset):
-    def __init__(self, seq_length=200, window_size=14000, chroms=['chr22'], mode='train', save_dir='./Epiphany_dataset', zero_pad=True):
-                
-        save_path_X = os.path.join(save_dir, 'GM12878_X.h5')
-        save_path_y = os.path.join(save_dir, 'GM12878_y.pickle')
+    def __init__(self, seq_length=200, window_size=14000, chroms=['chr22'], mode='train', X_data='GM12878_X.h5', y_data='GM12878_y.pickle', obs_exp_or_mean_data='H1_5kb_Akita_ICE_microC_mean.pt', zero_pad=True, subtract_mean=False, obs_exp=False):
 
         self.seq_length = seq_length
         self.chroms = chroms
@@ -27,19 +24,21 @@ class Chip2HiCDataset(torch.utils.data.Dataset):
         self.labels = {}
         self.sizes = []
         self.zero_pad = zero_pad
+        self.subtract_mean = subtract_mean
+        self.obs_exp = obs_exp  
 
         print("Loading input:")
-        if not os.path.exists(save_path_X):
-            raise FileNotFoundError(f"Input file not found: {save_path_X}")
+        if not os.path.exists(X_data):
+            raise FileNotFoundError(f"Input file not found: {X_data}")
         else:
-            print(f"Input file found: {save_path_X}")
-        if not os.path.exists(save_path_y):
-            raise FileNotFoundError(f"Label file not found: {save_path_y}")
+            print(f"Input file found: {X_data}")
+        if not os.path.exists(y_data):
+            raise FileNotFoundError(f"Label file not found: {y_data}")
         else:
-            print(f"Label file found: {save_path_y}")
-        self.inputs = h5.File(save_path_X, 'r')
+            print(f"Label file found: {y_data}")
+        self.inputs = h5.File(X_data, 'r')
         print("Loading labels:")
-        with open(save_path_y, 'rb') as handle:
+        with open(y_data, 'rb') as handle:
             self.labels = pickle.load(handle)          
 
         print(self.labels.keys())
@@ -50,7 +49,11 @@ class Chip2HiCDataset(torch.utils.data.Dataset):
             print(len(diag_log_list[0]))
             self.sizes.append((len(diag_log_list[0]) - 2*self.buf)//self.seq_length + 1)
 
+
         print(self.sizes)
+
+        if self.subtract_mean or self.obs_exp:
+            self.mean = torch.load(obs_exp_or_mean_data).numpy()
 
         return
 
@@ -70,7 +73,7 @@ class Chip2HiCDataset(torch.utils.data.Dataset):
         end = np.minimum(idx*self.seq_length + self.seq_length + self.buf, len(self.labels[chr][0]) - self.buf)
         contact_data = []
         for t in range(idx*self.seq_length + self.buf, np.minimum(idx*self.seq_length + self.seq_length + self.buf, len(self.labels[chr][0]) - self.buf),1):
-            contact_vec  = data_preparation(t,self.labels[chr],self.inputs[chr], distance=100)
+            contact_vec  = eutils.data_preparation(t,self.labels[chr],self.inputs[chr], distance=100)
             contact_data.append(contact_vec)
 
 
