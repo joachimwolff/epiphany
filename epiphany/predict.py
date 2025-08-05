@@ -45,7 +45,7 @@ def predict_on_chromosome(model,
                           resolution=10000
                         ):
     print(f"Predicting on {chromosome} with window size {window_size}")
-
+    
     dgpu.results_generation(
         chrom=chromosome,
         net=model,

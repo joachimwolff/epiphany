@@ -138,8 +138,9 @@ def pred_chrom(chrom, net,
             k = k0 * seq_length * 100
             x0 = [i[k:k+seq_length*100+window_size] for i in chip_list]
             x = torch.tensor(np.array(x0), dtype=torch.float64).to(device)  # Note: float32, not float64
-            
-            pred0 = net(x)[0]
+            pred0 = net(x.float())[0]  # Convert input to float32
+
+            # pred0 = net(x)[0]
             predlist.append(pred0[0].detach().cpu().numpy())
             del x0, x, pred0
 
@@ -259,6 +260,7 @@ def results_generation(chrom,
     seq_length: length of the submatrix along the diagonal
     resolution_hic: resolution of the Hi-C contact maps (default is 10kb)
     '''
+    # torch.set_default_dtype(torch.float32)
 
     # Read chromosomeSizesFile and make a dict if provided
     chromosome_sizes = None
